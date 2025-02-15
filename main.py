@@ -2,10 +2,11 @@ import json
 import os
 import re
 import time
-from typing import Callable
+from typing import Callable, Union
 import requests
 from datetime import datetime
 import dotenv
+import pytz
 
 dotenv.load_dotenv()
 
@@ -25,7 +26,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 Ramadan_Time_Data = {}
 Time_Difference_Data = {}
-User_District_Data = {}
 District_List = [
     "Bagerhat",
     "Bandarban",
@@ -92,11 +92,6 @@ District_List = [
     "Tangail",
     "Thakurgaon",
 ]
-
-
-# Get User District
-def get_user_district(userId: str) -> str:
-    return User_District_Data.get(userId)
 
 
 # Check and Set Ramadan Time Data
@@ -289,58 +284,213 @@ def escapeMarkdownV2(text: str) -> str:
     return escapedText
 
 
+# Load existing data
+def load_data():
+    if os.path.exists("userDistrict.json"):
+        with open("userDistrict.json", "r") as file:
+            return json.load(file)
+    return {}
+
+
+# Set user's city
+def set_user_district(user_id, district):
+    data = load_data()
+    data[str(user_id)] = district
+    with open("userDistrict.json", "w") as file:
+        json.dump(data, file, indent=4)
+
+
+def format_to_12h(hour: Union[int, str], minute: Union[int, str]) -> str:
+    if hour == "--" and minute == "--":
+        return "--:--"
+
+    time = datetime.strptime(f"{hour}:{minute}", "%H:%M")
+    return time.strftime("%I:%M %p")
+
+
+# Get user's city
+def get_user_district(user_id):
+    data = load_data()
+    return data.get(str(user_id))
+
+
+# Show Help
+async def show_help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        escapeMarkdownV2(
+            """📚 **Help Menu**
+
+Here are the commands you can use with this bot:
+
+1. **/start** - Start the Bot
+   - Get Today's Sehri and Iftar Time for your District
+
+2. **/help** - Get Help
+   - Display this help message with a list of available commands.
+
+3. **/district** - Custom District
+    - Get Time of Custom District
+
+4. **/reset** - Reset District
+    - Reset saved User District
+
+Feel free to use these commands to explore anime schedules! 🎉
+"""
+        ),
+        parse_mode="MarkdownV2",
+    )
+
+
 # Get Today's Time Data
-async def get_today_time_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    userDistrict = get_user_district(update.effective_user.id)
+async def today_time_data_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, custom_district=None
+):
+    if not custom_district:
+        userDistrict: Union[str, None] = get_user_district(update.effective_user.id)
+    else:
+        userDistrict = custom_district
+
     if not userDistrict:
         await update.message.reply_text(
             escapeMarkdownV2("\n".join([f"`{x}`" for x in District_List])),
             parse_mode="MarkdownV2",
         )
         await update.message.reply_text(
-            escapeMarkdownV2("Please Send your District Name:"), parse_mode="MarkdownV2"
+            escapeMarkdownV2("Please Send your District Name from List:"),
+            parse_mode="MarkdownV2",
         )
         context.user_data["waiting_for_location"] = True
 
         return
 
-    time_now = datetime.now()
+    tz = pytz.timezone("Asia/Dhaka")
+    time_now = datetime.now(tz)
     todayTimeData = {
         "day": time_now.day,
-        "month": 3,
+        "month": time_now.month,
         "year": time_now.year,
         "hour": time_now.hour,
         "minute": time_now.minute,
     }
 
-    todayData = parseTodayData(todayTimeData, userDistrict)
+    todayRamadanData = parseTodayData(todayTimeData, userDistrict)
+
+    replyText = f"""
+🔢 <b>Ramadan No:</b> {todayRamadanData["serial"]:02d}
+
+🌍 <b>Location:</b> {userDistrict.title()}
+📅 <b>Date:</b> {todayTimeData["day"]:02d} - {todayTimeData["month"]:02d} - {todayTimeData["year"]}  
+  
+
+🌙 <b>Sehri Time:</b> {format_to_12h(todayRamadanData["time"]["sehri"]["hour"],todayRamadanData["time"]["sehri"]["minute"])}  
+🕌 <b>Iftar Time:</b> {format_to_12h(todayRamadanData["time"]["iftar"]["hour"], todayRamadanData["time"]["iftar"]["minute"])}  
+
+⏳ <u><b>Time Left:</b></u>
+- <b>Sehri:</b> {todayRamadanData["left"]["sehri"]["hour"]:02d}h {todayRamadanData["left"]["sehri"]["minute"]:02d}m  
+- <b>Iftar:</b> {todayRamadanData["left"]["iftar"]["hour"]:02d}h {todayRamadanData["left"]["iftar"]["minute"]:02d}m  
+
+<i><b>{todayRamadanData["quote"]["quote"]}</b></i>  
+📖 <b>{todayRamadanData["quote"]["source"]}</b>
+"""
+
     await update.message.reply_text(
-        escapeMarkdownV2(json.dumps(todayData, indent=4)), parse_mode="MarkdownV2"
+        replyText,
+        parse_mode="html",
     )
 
 
+# Get Today's Time Data of Custom District
+async def custom_district_data_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    args = context.args
+    if len(args) < 1:
+        await update.message.reply_text(
+            escapeMarkdownV2(
+                "You Must provide a District Name\n\nExample: **`/district Dhaka`**"
+            ),
+            parse_mode="MarkdownV2",
+        )
+        return
+
+    userDistrict = args[0].strip().lower()
+    if userDistrict not in userDistrict not in [x.lower() for x in District_List]:
+        await update.message.reply_text("Invalid District Name")
+        await update.message.reply_text(
+            escapeMarkdownV2("\n".join([f"`{x}`" for x in District_List])),
+            parse_mode="MarkdownV2",
+        )
+        await update.message.reply_text(
+            escapeMarkdownV2("Select District From Above List"),
+            parse_mode="MarkdownV2",
+        )
+
+    await today_time_data_command(update, context, userDistrict)
+
+
+# Reset User Data
+async def reset_user_data_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    set_user_district(update.effective_user.id, None)
+    await update.message.reply_text("User Data Reset Successfully!")
+
+
+# Save User location
 async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("waiting_for_location"):
         return
 
-    userDistrict = update.message.text.strip().lower().title()
-    if (not userDistrict) or (userDistrict not in District_List):
+    userDistrict = update.message.text.strip().lower()
+    if (not userDistrict) or (userDistrict not in [x.lower() for x in District_List]):
         await update.message.reply_text("Invalid District Name. Please Try Again.")
         return
 
-    User_District_Data[update.effective_user.id] = userDistrict
+    set_user_district(update.effective_user.id, userDistrict)
     context.user_data["waiting_for_location"] = False
-    await update.message.reply_text("Location Saved Successfully!")
+    await update.message.reply_text(
+        "Location Saved Successfully!\nYou can Restart (/start) the bot to get Today's Time Data."
+    )
+
+
+# Error Handler
+async def handle_error(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(f"Update {update} caused error: {context.error}")
+
+    await update.message.reply_text("Server Error, Please try again!")
 
 
 # START APP
-def setup_app(app):
+def setup_app(app: Application):
 
     app.add_handler(
         CommandHandler(
             "start",
             lambda update, context: timeoutWrapper(
-                get_today_time_data, update, context
+                today_time_data_command, update, context
+            ),
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "help",
+            lambda update, context: timeoutWrapper(show_help_command, update, context),
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "district",
+            lambda update, context: timeoutWrapper(
+                custom_district_data_command, update, context
+            ),
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "reset",
+            lambda update, context: timeoutWrapper(
+                reset_user_data_command, update, context
             ),
         )
     )
@@ -351,6 +501,9 @@ def setup_app(app):
             lambda update, context: timeoutWrapper(save_user_location, update, context),
         )
     )
+
+    # Error Handler
+    app.add_error_handler(handle_error)
 
     print("Pooling...")
     app.run_polling()
