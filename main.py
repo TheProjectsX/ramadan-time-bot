@@ -3,7 +3,6 @@ import os
 import re
 import time
 from typing import Callable, Union
-import requests
 from datetime import datetime, date
 import dotenv
 import pytz
