@@ -4,7 +4,7 @@ import re
 import time
 from typing import Callable, Union
 import requests
-from datetime import datetime
+from datetime import datetime, date
 import dotenv
 import pytz
 
@@ -12,7 +12,7 @@ dotenv.load_dotenv()
 
 
 import telegram
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -98,23 +98,8 @@ District_List = [
 def checkAndSetTimeData() -> None:
     global Ramadan_Time_Data, Time_Difference_Data
 
-    if Ramadan_Time_Data.get("status") == "running":
-        return
-
-    """
-    fileUrl = "https://raw.githubusercontent.com/Toxic-Noob/PersonalRepository/main/ramadan/timeData.json"
-    response = requests.get(fileUrl)
-    if not response.status_code == 200:
-        return
-    
-    data: dict = response.json()
-    if data.get("status") == "running":
-        Ramadan_Time_Data = data
-        with open("timeDifference.json", "r") as f:
-            Time_Difference_Data = json.load(f)
-    """
     with open("timeData.json", "r") as f:
-        Ramadan_Time_Data = json.load(f).get("timeData")
+        Ramadan_Time_Data = json.load(f)
 
     with open("timeDifference.json", "r") as f:
         Time_Difference_Data = json.load(f)
@@ -124,7 +109,7 @@ def checkAndSetTimeData() -> None:
 def parseDateDataFromDataset(todayTimeData: str):
     key = f"{todayTimeData.get('day')}:{todayTimeData.get('month')}:{todayTimeData.get('year')}"
 
-    data = Ramadan_Time_Data.get(key)
+    data = Ramadan_Time_Data.get("timeData").get(key)
 
     return data
 
@@ -193,7 +178,10 @@ def get_days_in_month(month, year):
 def parseTodayData(todayTimeData: dict, district: str):
     # key = DD:MM:YYYY
     key = f"{todayTimeData.get('day')}:{todayTimeData.get('month')}:{todayTimeData.get('year')}"
-    dateDataset = Ramadan_Time_Data.get(key)
+    try:
+        dateDataset = Ramadan_Time_Data.get("timeData").get(key)
+    except Exception as e:
+        return None
 
     sehriUser = calculateDistrict(dateDataset.get("sehri"), "sehri", district)
     iftarUser = calculateDistrict(dateDataset.get("iftar"), "iftar", district)
@@ -225,7 +213,7 @@ def parseTodayData(todayTimeData: dict, district: str):
                 todayTimeData["year"] += 1
 
         key = f"{todayTimeData.get('day')}:{todayTimeData.get('month')}:{todayTimeData.get('year')}"
-        dateDataset2 = Ramadan_Time_Data.get(key)
+        dateDataset2 = Ramadan_Time_Data.get("timeData").get(key)
 
         sehriUser = calculateDistrict(dateDataset2.get("sehri"), "sehri")
 
@@ -334,10 +322,11 @@ Here are the commands you can use with this bot:
 4. **/reset** - Reset District
     - Reset saved User District
 
-Feel free to use these commands to explore anime schedules! 🎉
+Feel free to use these commands to get Iftar and Sehri Time! 🎉
 """
         ),
         parse_mode="MarkdownV2",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
@@ -351,16 +340,36 @@ async def today_time_data_command(
         userDistrict = custom_district
 
     if not userDistrict:
-        await update.message.reply_text(
-            escapeMarkdownV2("\n".join([f"`{x}`" for x in District_List])),
-            parse_mode="MarkdownV2",
+        reply_markup = ReplyKeyboardMarkup(
+            [[district] for district in District_List], one_time_keyboard=True
         )
+
+        await update.message.reply_text("Assalamu Alaikum!")
         await update.message.reply_text(
-            escapeMarkdownV2("Please Send your District Name from List:"),
+            escapeMarkdownV2("Please Select your District Name:"),
             parse_mode="MarkdownV2",
+            reply_markup=reply_markup,
         )
         context.user_data["waiting_for_location"] = True
 
+        return
+
+    today = date.today()
+    event_date = date(
+        Ramadan_Time_Data.get("startDate", {}).get("year"),
+        Ramadan_Time_Data.get("startDate", {}).get("month"),
+        Ramadan_Time_Data.get("startDate", {}).get("day"),
+    )
+
+    if today < event_date:
+        await update.message.reply_text(
+            escapeMarkdownV2(
+                f"""Ramadan is Coming!
+
+📅 *Possibility:* {Ramadan_Time_Data.get("startDate", {}).get("day"):02d} - {Ramadan_Time_Data.get("startDate", {}).get("month"):02d} - {Ramadan_Time_Data.get("startDate", {}).get("year")}"""
+            ),
+            parse_mode="MarkdownV2",
+        )
         return
 
     tz = pytz.timezone("Asia/Dhaka")
@@ -374,6 +383,9 @@ async def today_time_data_command(
     }
 
     todayRamadanData = parseTodayData(todayTimeData, userDistrict)
+    if not todayRamadanData:
+        await update.message.reply_text("It's not Ramadan!")
+        return
 
     replyText = f"""
 🔢 <b>Ramadan No:</b> {todayRamadanData["serial"]:02d}
@@ -393,10 +405,7 @@ async def today_time_data_command(
 📖 <b>{todayRamadanData["quote"]["source"]}</b>
 """
 
-    await update.message.reply_text(
-        replyText,
-        parse_mode="html",
-    )
+    await update.message.reply_text(replyText, parse_mode="html")
 
 
 # Get Today's Time Data of Custom District
@@ -447,7 +456,8 @@ async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE)
     set_user_district(update.effective_user.id, userDistrict)
     context.user_data["waiting_for_location"] = False
     await update.message.reply_text(
-        "Location Saved Successfully!\nYou can Restart (/start) the bot to get Today's Time Data."
+        "Location Saved Successfully!\nYou can Restart (/start) the bot to get Today's Time Data.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
