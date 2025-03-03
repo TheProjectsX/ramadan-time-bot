@@ -214,7 +214,7 @@ def parseTodayData(todayTimeData: dict, district: str):
         key = f"{todayTimeData.get('day')}:{todayTimeData.get('month')}:{todayTimeData.get('year')}"
         dateDataset2 = Ramadan_Time_Data.get("timeData").get(key)
 
-        sehriUser = calculateDistrict(dateDataset2.get("sehri"), "sehri")
+        sehriUser = calculateDistrict(dateDataset2.get("sehri"), "sehri", district)
 
         total_current_minutes = todayTimeData.get("hour") * 60 + todayTimeData.get(
             "minute"
@@ -353,7 +353,9 @@ async def today_time_data_command(
 
         return
 
-    today = date.today()
+    tz = pytz.timezone("Asia/Dhaka")
+
+    today = datetime.now(tz).date()
     event_date = date(
         Ramadan_Time_Data.get("startDate", {}).get("year"),
         Ramadan_Time_Data.get("startDate", {}).get("month"),
@@ -371,7 +373,6 @@ async def today_time_data_command(
         )
         return
 
-    tz = pytz.timezone("Asia/Dhaka")
     time_now = datetime.now(tz)
     todayTimeData = {
         "day": time_now.day,
@@ -442,9 +443,15 @@ async def reset_user_data_command(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text("User Data Reset Successfully!")
 
 
+# Show
+
+
 # Save User location
-async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("waiting_for_location"):
+        if update.message.text.strip() == "Show Time":
+            await today_time_data_command(update, context)
+
         return
 
     userDistrict = update.message.text.strip().lower()
@@ -456,7 +463,7 @@ async def save_user_location(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["waiting_for_location"] = False
     await update.message.reply_text(
         "Location Saved Successfully!\nYou can Restart (/start) the bot to get Today's Time Data.",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=ReplyKeyboardMarkup([["Show Time"]]),
     )
 
 
@@ -507,7 +514,9 @@ def setup_app(app: Application):
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            lambda update, context: timeoutWrapper(save_user_location, update, context),
+            lambda update, context: timeoutWrapper(
+                handle_user_message, update, context
+            ),
         )
     )
 
